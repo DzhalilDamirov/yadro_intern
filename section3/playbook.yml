@@ -1,0 +1,52 @@
+---
+- name: Установка Docker и проверка скрипта
+  hosts: docker_hosts
+  become: true
+
+  vars:
+    project_root: "{{ playbook_dir | dirname }}"
+
+  tasks:
+    - name: Установить Docker
+      ansible.builtin.apt:
+        name: docker.io
+        state: present
+        update_cache: true
+
+    - name: Добавить текущего пользователя в группу docker
+      ansible.builtin.user:
+        name: "{{ ansible_user | default(ansible_user_id) }}"
+        groups: docker
+        append: true
+
+    - name: Убедиться, что служба docker запущена
+      ansible.builtin.service:
+        name: docker
+        state: started
+        enabled: true
+
+    - name: Собрать Docker-образ
+      ansible.builtin.command: docker build -f section2/Dockerfile -t httpstat .
+      args:
+        chdir: "{{ project_root }}"
+      changed_when: true
+
+    - name: Для повторного запуска удалить предыдущий контейнер
+      ansible.builtin.command: docker rm -f httpstat-check
+      failed_when: false
+      changed_when: false
+
+    - name: Запустить скрипт в контейнере
+      ansible.builtin.command: docker run --name httpstat-check httpstat
+      changed_when: true
+
+    - name: Получить логи контейнера (docker logs)
+      ansible.builtin.command: docker logs httpstat-check
+      register: logs
+      changed_when: false
+
+    - name: Автоматически проверить успешность работы скрипта
+      ansible.builtin.assert:
+        that:
+          - "'Обработано запросов: 5' in logs.stdout"
+        success_msg: "Скрипт успешно отработал внутри контейнера!"
